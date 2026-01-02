@@ -19,6 +19,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli"] }
 
 semver = "1"
+zip = "2"
+
+# In-app preview helper (WebView window)
+wry = "0.50"
+tao = "0.32"
 
 # local storage
 directories = "5"

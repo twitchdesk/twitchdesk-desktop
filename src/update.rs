@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+use std::{fs::File, io};
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use semver::Version;
 use serde::Deserialize;
 use tracing::{info, warn};
+use zip::ZipArchive;
 
 const DEFAULT_GITHUB_OWNER: &str = "twitchdesk";
 const DEFAULT_GITHUB_REPO: &str = "twitchdesk-desktop";
@@ -170,7 +172,7 @@ async fn download_latest_if_newer() -> Result<Option<PathBuf>> {
         return Ok(None);
     }
 
-    let asset_name = expected_asset_name();
+    let asset_name = expected_bundle_asset_name();
 
     let Some(asset) = release.assets.into_iter().find(|a| a.name == asset_name) else {
         warn!(expected = %asset_name, "no matching release asset for this platform");
@@ -210,7 +212,7 @@ fn github_repo_from_env() -> (String, String) {
     (DEFAULT_GITHUB_OWNER.to_string(), DEFAULT_GITHUB_REPO.to_string())
 }
 
-fn expected_asset_name() -> String {
+fn expected_bundle_asset_name() -> String {
     let os = match std::env::consts::OS {
         "windows" => "windows",
         "linux" => "linux",
@@ -224,9 +226,7 @@ fn expected_asset_name() -> String {
         other => other,
     };
 
-    let ext = if os == "windows" { ".exe" } else { "" };
-
-    format!("twitchdesk-desktop-{os}-{arch}{ext}")
+    format!("twitchdesk-desktop-{os}-{arch}.zip")
 }
 
 fn update_download_path(version: &Version, asset_name: &str) -> Result<PathBuf> {
@@ -246,7 +246,7 @@ fn apply_update_and_relaunch(target_exe: &Path, downloaded: &Path, relaunch_args
     // Wait a bit for the parent process (that spawned us) to fully exit.
     // Especially needed on Windows where the .exe is locked while running.
     for _ in 0..30 {
-        if try_apply_update(target_exe, downloaded).is_ok() {
+        if try_apply_update_bundle(target_exe, downloaded).is_ok() {
             info!("update applied");
 
             // Relaunch updated binary.
@@ -264,24 +264,106 @@ fn apply_update_and_relaunch(target_exe: &Path, downloaded: &Path, relaunch_args
     Ok(())
 }
 
-fn try_apply_update(exe_path: &Path, downloaded: &Path) -> Result<()> {
-    if !downloaded.exists() {
+fn try_apply_update_bundle(target_exe: &Path, downloaded_zip: &Path) -> Result<()> {
+    if !downloaded_zip.exists() {
         anyhow::bail!("downloaded update missing")
     }
 
-    let exe_file = exe_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("twitchdesk-desktop");
+    let target_dir = target_exe
+        .parent()
+        .context("resolve target exe directory")?;
 
-    let old_path = exe_path.with_file_name(format!("{exe_file}.old"));
+    let stage_dir = target_dir.join(".twitchdesk-update-staging");
+    let _ = std::fs::remove_dir_all(&stage_dir);
+    std::fs::create_dir_all(&stage_dir).with_context(|| format!("create {}", stage_dir.display()))?;
+
+    extract_zip_to(downloaded_zip, &stage_dir)?;
+
+    let main_name = if std::env::consts::OS == "windows" {
+        "twitchdesk-desktop.exe"
+    } else {
+        "twitchdesk-desktop"
+    };
+    let preview_name = if std::env::consts::OS == "windows" {
+        "twitchdesk-preview.exe"
+    } else {
+        "twitchdesk-preview"
+    };
+
+    let new_main = stage_dir.join(main_name);
+    let new_preview = stage_dir.join(preview_name);
+    if !new_main.exists() {
+        anyhow::bail!("bundle missing {}", main_name)
+    }
+    if !new_preview.exists() {
+        anyhow::bail!("bundle missing {}", preview_name)
+    }
+
+    let target_preview = target_dir.join(preview_name);
+
+    swap_file(target_exe, &new_main)?;
+    swap_file(&target_preview, &new_preview)?;
 
     // Best-effort cleanup.
+    let _ = std::fs::remove_dir_all(&stage_dir);
+    let _ = std::fs::remove_file(downloaded_zip);
+
+    Ok(())
+}
+
+fn extract_zip_to(zip_path: &Path, out_dir: &Path) -> Result<()> {
+    let file = File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let mut archive = ZipArchive::new(file).context("open zip")?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).context("read zip entry")?;
+        if entry.is_dir() {
+            continue;
+        }
+
+        let Some(name) = entry.enclosed_name() else {
+            continue;
+        };
+
+        // Only extract top-level files (avoid nested paths / zip-slip).
+        if name.components().count() != 1 {
+            continue;
+        }
+
+        let out_path = out_dir.join(name);
+        let mut out_file = File::create(&out_path)
+            .with_context(|| format!("create {}", out_path.display()))?;
+        io::copy(&mut entry, &mut out_file)
+            .with_context(|| format!("write {}", out_path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&out_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&out_path, perms)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn swap_file(target: &Path, new_file: &Path) -> Result<()> {
+    let target_file = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("app");
+
+    let old_path = target.with_file_name(format!("{target_file}.old"));
     let _ = std::fs::remove_file(&old_path);
 
-    // Swap: exe -> old, downloaded -> exe.
-    std::fs::rename(exe_path, &old_path).context("rename current exe to .old")?;
-    std::fs::rename(downloaded, exe_path).context("rename downloaded to current exe")?;
+    if target.exists() {
+        std::fs::rename(target, &old_path)
+            .with_context(|| format!("rename {} to .old", target.display()))?;
+    }
+
+    std::fs::rename(new_file, target)
+        .with_context(|| format!("rename {} to {}", new_file.display(), target.display()))?;
 
     Ok(())
 }

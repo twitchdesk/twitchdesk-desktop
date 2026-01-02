@@ -1,7 +1,10 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod models;
 mod storage;
 mod update;
+mod preview;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()

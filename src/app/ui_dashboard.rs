@@ -35,6 +35,8 @@ impl TwitchDeskApp {
                 .clicked()
             {
                 self.active_view = View::Templates;
+                // Auto-load templates when opening the view.
+                self.templates_refresh_list();
             }
         });
     }
@@ -199,46 +201,55 @@ impl TwitchDeskApp {
         });
 
         ui.add_space(10.0);
-        ui.columns(2, |cols| {
-            // Left: list
-            cols[0].heading("Your templates");
-            cols[0].add_space(6.0);
-            egui::ScrollArea::vertical()
-                .max_height(520.0)
-                .show(&mut cols[0], |ui| {
-                    if self.templates_list.is_empty() {
-                        ui.label("No templates yet");
-                        return;
-                    }
-                    for t in self.templates_list.clone() {
-                        let selected = self
-                            .templates_selected_template_id
-                            .as_deref()
-                            .map(|id| id == t.id)
-                            .unwrap_or(false);
-                        let label = format!("{}", t.name);
-                        if ui.selectable_label(selected, label).clicked() {
-                            self.templates_select_template(&t.id);
+
+        // Split layout: fixed list on the left, editor on the right.
+        ui.horizontal(|ui| {
+            let list_width = 280.0;
+            let height = ui.available_height();
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(list_width, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.heading("Your templates");
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if self.templates_list.is_empty() {
+                            ui.label("No templates yet");
+                            return;
                         }
-                    }
-                });
+                        for t in self.templates_list.clone() {
+                            let selected = self
+                                .templates_selected_template_id
+                                .as_deref()
+                                .map(|id| id == t.id)
+                                .unwrap_or(false);
+                            if ui.selectable_label(selected, t.name.clone()).clicked() {
+                                self.templates_select_template(&t.id);
+                            }
+                        }
+                    });
+                },
+            );
 
-            // Right: editor
-            cols[1].heading("Editor");
-            cols[1].add_space(6.0);
+            ui.separator();
 
-            let Some(template_id) = self.templates_selected_template_id.clone() else {
-                cols[1].label("Select a template to edit.");
-                return;
-            };
+            ui.vertical(|ui| {
+                ui.heading("Editor");
+                ui.add_space(6.0);
 
-            let template_name = self
-                .templates_selected_template_name
-                .clone()
-                .unwrap_or_else(|| "<unknown>".to_string());
-            cols[1].label(format!("Template: {}", template_name));
+                let Some(template_id) = self.templates_selected_template_id.clone() else {
+                    ui.label("Select a template to edit.");
+                    return;
+                };
 
-            cols[1].horizontal(|ui| {
+                let template_name = self
+                    .templates_selected_template_name
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                ui.label(format!("Template: {}", template_name));
+
+                ui.horizontal(|ui| {
                 ui.label("Version");
                 let mut selected = self.templates_selected_version.clone().unwrap_or_default();
                 egui::ComboBox::from_id_salt("templates_version_combo")
@@ -260,64 +271,81 @@ impl TwitchDeskApp {
                         self.templates_load_version(&template_id, &selected);
                     }
                 }
-            });
+                });
 
-            cols[1].add_space(6.0);
-            cols[1].horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
                     self.templates_save_current_version();
                 }
                 if ui.button("Publish").clicked() {
                     self.templates_publish_current_version();
                 }
-            });
+                });
 
-            cols[1].add_space(6.0);
-            if let (Some(ver), Some(username)) = (
+                ui.add_space(6.0);
+                if let (Some(ver), Some(username)) = (
                 self.templates_selected_version.clone(),
                 self.local
                     .username
                     .clone()
                     .or_else(|| Some(self.username.clone()))
                     .filter(|s| !s.trim().is_empty()),
-            ) {
-                let base = self.local.api_base_url.trim().trim_end_matches('/');
-                let url = format!(
-                    "{}/{}/template/{}/{}",
-                    base,
-                    urlencoding::encode(username.trim()),
-                    urlencoding::encode(template_name.trim()),
-                    urlencoding::encode(ver.trim())
-                );
-                cols[1].horizontal(|ui| {
-                    ui.label("Preview URL");
-                    ui.label(url.clone());
-                });
-                cols[1].horizontal(|ui| {
-                    if ui.button("Copy (mock)").clicked() {
-                        ui.output_mut(|o| o.copied_text = format!("{}?mock=true", url));
-                        self.templates_status = "Copied preview URL.".to_string();
-                    }
-
-                    if ui.button("Open").clicked() {
-                        match webbrowser::open(&url) {
-                            Ok(_) => self.templates_status = "Opened preview URL.".to_string(),
-                            Err(e) => self.templates_status = format!("Open failed: {e}"),
+                ) {
+                    let base = self.local.api_base_url.trim().trim_end_matches('/');
+                    let url = format!(
+                        "{}/{}/template/{}/{}",
+                        base,
+                        urlencoding::encode(username.trim()),
+                        urlencoding::encode(template_name.trim()),
+                        urlencoding::encode(ver.trim())
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Preview URL");
+                        ui.label(url.clone());
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Copy (mock)").clicked() {
+                            ui.output_mut(|o| o.copied_text = format!("{}?mock=true", url));
+                            self.templates_status = "Copied preview URL.".to_string();
                         }
-                    }
 
-                    if ui.button("Open (mock)").clicked() {
-                        let u = format!("{}?mock=true", url);
-                        match webbrowser::open(&u) {
-                            Ok(_) => self.templates_status = "Opened preview URL (mock).".to_string(),
-                            Err(e) => self.templates_status = format!("Open failed: {e}"),
+                        if ui.button("Preview").clicked() {
+                            match crate::preview::open_preview(&url) {
+                                Ok(()) => self.templates_status = "Opened in-app preview.".to_string(),
+                                Err(e) => self.templates_status = format!("Preview failed: {e:#}"),
+                            }
                         }
-                    }
-                });
-            }
 
-            cols[1].add_space(10.0);
-            cols[1].horizontal(|ui| {
+                        if ui.button("Preview (mock)").clicked() {
+                            let u = format!("{}?mock=true", url);
+                            match crate::preview::open_preview(&u) {
+                                Ok(()) => {
+                                    self.templates_status = "Opened in-app preview (mock).".to_string()
+                                }
+                                Err(e) => self.templates_status = format!("Preview failed: {e:#}"),
+                            }
+                        }
+
+                        if ui.button("Open").clicked() {
+                            match webbrowser::open(&url) {
+                                Ok(_) => self.templates_status = "Opened preview URL.".to_string(),
+                                Err(e) => self.templates_status = format!("Open failed: {e}"),
+                            }
+                        }
+
+                        if ui.button("Open (mock)").clicked() {
+                            let u = format!("{}?mock=true", url);
+                            match webbrowser::open(&u) {
+                                Ok(_) => self.templates_status = "Opened preview URL (mock).".to_string(),
+                                Err(e) => self.templates_status = format!("Open failed: {e}"),
+                            }
+                        }
+                    });
+                }
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
                 ui.label("New version");
                 ui.add(
                     egui::TextEdit::singleline(&mut self.templates_new_version)
@@ -327,10 +355,10 @@ impl TwitchDeskApp {
                 if ui.button("Create from current").clicked() {
                     self.templates_create_version_from_current();
                 }
-            });
+                });
 
-            cols[1].add_space(10.0);
-            cols[1].horizontal(|ui| {
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
                 ui.label("Duplicate template");
                 ui.add(
                     egui::TextEdit::singleline(&mut self.templates_duplicate_template_name)
@@ -340,10 +368,10 @@ impl TwitchDeskApp {
                 if ui.button("Duplicate").clicked() {
                     self.templates_duplicate_template();
                 }
-            });
+                });
 
-            cols[1].add_space(12.0);
-            cols[1].horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
                 let html_sel = self.templates_editor_tab == TemplatesEditorTab::Html;
                 let css_sel = self.templates_editor_tab == TemplatesEditorTab::Css;
                 let js_sel = self.templates_editor_tab == TemplatesEditorTab::Js;
@@ -357,32 +385,33 @@ impl TwitchDeskApp {
                 if ui.selectable_label(js_sel, "JS").clicked() {
                     self.templates_editor_tab = TemplatesEditorTab::Js;
                 }
-            });
+                });
 
-            cols[1].add_space(6.0);
-            match self.templates_editor_tab {
-                TemplatesEditorTab::Html => {
-                    cols[1].add(
-                        egui::TextEdit::multiline(&mut self.templates_index_html)
-                            .desired_rows(18)
-                            .code_editor(),
-                    );
+                ui.add_space(6.0);
+                match self.templates_editor_tab {
+                    TemplatesEditorTab::Html => {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.templates_index_html)
+                                .desired_rows(18)
+                                .code_editor(),
+                        );
+                    }
+                    TemplatesEditorTab::Css => {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.templates_style_css)
+                                .desired_rows(18)
+                                .code_editor(),
+                        );
+                    }
+                    TemplatesEditorTab::Js => {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.templates_overlay_js)
+                                .desired_rows(18)
+                                .code_editor(),
+                        );
+                    }
                 }
-                TemplatesEditorTab::Css => {
-                    cols[1].add(
-                        egui::TextEdit::multiline(&mut self.templates_style_css)
-                            .desired_rows(18)
-                            .code_editor(),
-                    );
-                }
-                TemplatesEditorTab::Js => {
-                    cols[1].add(
-                        egui::TextEdit::multiline(&mut self.templates_overlay_js)
-                            .desired_rows(18)
-                            .code_editor(),
-                    );
-                }
-            }
+            });
         });
     }
 }

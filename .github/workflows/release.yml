@@ -16,7 +16,7 @@ jobs:
     env:
       # Optional: set this secret in GitHub to avoid committing your server URL.
       # NOTE: End users can still discover it (the app needs it to connect).
-      TWITCHDESK_API_BASE_URL: ${{ secrets.API_BASE_URL }}
+      TWITCHDESK_API_BASE_URL: ${{ secrets.TWITCHDESK_API_BASE_URL }}
     strategy:
       fail-fast: false
       matrix:

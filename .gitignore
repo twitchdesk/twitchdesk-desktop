@@ -1,0 +1,17 @@
+/target/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Local config
+.env
+.env.*
+
+# Updater cache (optional to ignore; keeps repo clean if running from repo)
+TwitchDesk/

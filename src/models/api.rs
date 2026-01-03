@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 /// Data stored in the cloud API (contains secrets). Do not log.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserConfig {
+    #[serde(default)]
     pub twitch_client_id: String,
+    #[serde(default)]
     pub twitch_client_secret: String,
 
     pub twitch_channel: Option<String>,

@@ -20,6 +20,41 @@ pub(crate) fn open_preview_with_args(url: &str, extra_args: &[String]) -> Result
         "twitchdesk-preview"
     };
 
+    let preview_exe = resolve_preview_exe(&exe_dir, preview_exe_name)?;
+
+    let mut cmd = Command::new(preview_exe);
+    cmd.arg(url);
+    cmd.args(extra_args);
+    cmd.spawn().context("launch preview helper")?;
+
+    Ok(())
+}
+
+pub(crate) fn open_preview_with_args_blocking(url: &str, extra_args: &[String]) -> Result<()> {
+    let current_exe = std::env::current_exe().context("get current exe")?;
+    let exe_dir = current_exe
+        .parent()
+        .context("resolve exe directory")?
+        .to_path_buf();
+
+    let preview_exe_name = if std::env::consts::OS == "windows" {
+        "twitchdesk-preview.exe"
+    } else {
+        "twitchdesk-preview"
+    };
+
+    let preview_exe = resolve_preview_exe(&exe_dir, preview_exe_name)?;
+
+    let mut cmd = Command::new(preview_exe);
+    cmd.arg(url);
+    cmd.args(extra_args);
+
+    let mut child = cmd.spawn().context("launch preview helper")?;
+    child.wait().context("wait for preview helper")?;
+    Ok(())
+}
+
+fn resolve_preview_exe(exe_dir: &std::path::Path, preview_exe_name: &str) -> Result<PathBuf> {
     // Release installs should place the helper next to the main app.
     let candidate = exe_dir.join(preview_exe_name);
     let preview_exe = if candidate.exists() {
@@ -39,10 +74,5 @@ pub(crate) fn open_preview_with_args(url: &str, extra_args: &[String]) -> Result
         );
     }
 
-    let mut cmd = Command::new(preview_exe);
-    cmd.arg(url);
-    cmd.args(extra_args);
-    cmd.spawn().context("launch preview helper")?;
-
-    Ok(())
+    Ok(preview_exe)
 }

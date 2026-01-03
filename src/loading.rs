@@ -59,7 +59,7 @@ fn try_show_startup_loading_splash() -> Result<()> {
 
     let url = path_to_file_url(&path)?;
 
-    // Default loop in HTML is ~5200ms; give it enough time to show the logo.
-    let extra_args = vec!["--auto-close-ms".to_string(), "5200".to_string()];
-    preview::open_preview_with_args(&url, &extra_args)
+    // Keep it short: show the brand loading, then start the app.
+    let extra_args = vec!["--auto-close-ms".to_string(), "3000".to_string()];
+    preview::open_preview_with_args_blocking(&url, &extra_args)
 }

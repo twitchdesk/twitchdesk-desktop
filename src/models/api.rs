@@ -70,6 +70,16 @@ pub struct ChannelStatus {
     pub is_live: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeResponse {
+    pub twitch_client_id: String,
+    pub twitch_channel: Option<String>,
+    pub twitch_bot_username: Option<String>,
+    pub twitch_channels: Vec<String>,
+    pub has_client_secret: bool,
+    pub public_twitch_avatar_enabled: bool,
+}
+
 // -------------------------------
 // Overlay Templates (OBS)
 // -------------------------------

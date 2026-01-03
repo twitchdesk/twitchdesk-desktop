@@ -102,7 +102,6 @@ impl TwitchDeskApp {
 
                         ui.add_space(8.0);
                         if ui.button("Save").clicked() {
-                            self.save_local();
                             self.save_user_config_to_api();
                         }
                     });

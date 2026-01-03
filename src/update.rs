@@ -18,6 +18,12 @@ const ARG_TARGET_EXE: &str = "--target-exe";
 const ARG_SKIP_UPDATE: &str = "--skip-update";
 const ARG_RELAUNCH_SEP: &str = "--";
 
+#[derive(Debug, Clone)]
+pub(crate) struct UpdateInfo {
+    pub latest: Version,
+    pub asset_name: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
@@ -30,20 +36,10 @@ struct GithubAsset {
     browser_download_url: String,
 }
 
-pub(crate) fn maybe_run_startup_update() -> Result<()> {
-    // Skip in debug to keep dev fast.
-    if cfg!(debug_assertions) {
-        return Ok(());
-    }
-
-    if std::env::var("TWITCHDESK_DISABLE_UPDATES")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        return Ok(());
-    }
-
+/// Handles internal updater mode when we are launched as the helper.
+///
+/// This must run before the GUI starts.
+pub(crate) fn maybe_run_apply_mode_and_exit() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
 
     // Internal mode: apply downloaded update and relaunch.
@@ -80,12 +76,68 @@ pub(crate) fn maybe_run_startup_update() -> Result<()> {
         std::process::exit(0);
     }
 
+    Ok(())
+}
+
+fn updates_enabled() -> bool {
+    if std::env::var("TWITCHDESK_DISABLE_UPDATES")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        return false;
+    }
+    true
+}
+
+pub(crate) fn auto_updates_enabled() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+
+    // Opt-in, so we don't surprise users during beta.
+    std::env::var("TWITCHDESK_AUTO_UPDATE")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+/// Check if an update is available (release builds only). Does not download or apply.
+pub(crate) fn check_update_available() -> Result<Option<UpdateInfo>> {
+    // Skip in debug to keep dev fast.
+    if cfg!(debug_assertions) {
+        return Ok(None);
+    }
+    if !updates_enabled() {
+        return Ok(None);
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create tokio runtime for updater")?;
+
+    rt.block_on(check_latest_if_newer())
+}
+
+/// Download + apply latest update (if newer) and relaunch. Exits current process if update starts.
+pub(crate) fn apply_update_if_available_and_exit() -> Result<()> {
+    // Skip in debug to keep dev fast.
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+    if !updates_enabled() {
+        return Ok(());
+    }
+
+    let args = std::env::args().collect::<Vec<_>>();
+
     // User-visible mode: optionally skip once.
     if args.iter().any(|a| a == ARG_SKIP_UPDATE) {
         return Ok(());
     }
 
-    // Check latest GitHub release, download correct asset, then apply+relaunch.
+    // User-visible mode: optionally skip once.
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -118,25 +170,7 @@ pub(crate) fn maybe_run_startup_update() -> Result<()> {
     Ok(())
 }
 
-fn ensure_updater_helper(current_exe: &Path) -> Result<PathBuf> {
-    let Some(proj) = ProjectDirs::from("com", "twitchdesk", "TwitchDesk") else {
-        anyhow::bail!("unable to resolve user directories")
-    };
-    let dir = proj.cache_dir().join("updates").join("helper");
-    std::fs::create_dir_all(&dir).with_context(|| format!("create dir {}", dir.display()))?;
-
-    let ext = if std::env::consts::OS == "windows" { ".exe" } else { "" };
-    let helper = dir.join(format!("twitchdesk-desktop-updater{ext}"));
-
-    // Always refresh helper to match current version.
-    let _ = std::fs::remove_file(&helper);
-    std::fs::copy(current_exe, &helper)
-        .with_context(|| format!("copy updater helper to {}", helper.display()))?;
-
-    Ok(helper)
-}
-
-async fn download_latest_if_newer() -> Result<Option<PathBuf>> {
+async fn check_latest_if_newer() -> Result<Option<UpdateInfo>> {
     let (owner, repo) = github_repo_from_env();
 
     let current = Version::parse(env!("CARGO_PKG_VERSION"))
@@ -174,11 +208,73 @@ async fn download_latest_if_newer() -> Result<Option<PathBuf>> {
 
     let asset_name = expected_bundle_asset_name();
 
+    let has_asset = release.assets.iter().any(|a| a.name == asset_name);
+    if !has_asset {
+        warn!(expected = %asset_name, "no matching release asset for this platform");
+        return Ok(Some(UpdateInfo { latest, asset_name }));
+    }
+
+    Ok(Some(UpdateInfo { latest, asset_name }))
+}
+
+fn ensure_updater_helper(current_exe: &Path) -> Result<PathBuf> {
+    let Some(proj) = ProjectDirs::from("com", "twitchdesk", "TwitchDesk") else {
+        anyhow::bail!("unable to resolve user directories")
+    };
+    let dir = proj.cache_dir().join("updates").join("helper");
+    std::fs::create_dir_all(&dir).with_context(|| format!("create dir {}", dir.display()))?;
+
+    let ext = if std::env::consts::OS == "windows" { ".exe" } else { "" };
+    let helper = dir.join(format!("twitchdesk-desktop-updater{ext}"));
+
+    // Always refresh helper to match current version.
+    let _ = std::fs::remove_file(&helper);
+    std::fs::copy(current_exe, &helper)
+        .with_context(|| format!("copy updater helper to {}", helper.display()))?;
+
+    Ok(helper)
+}
+
+async fn download_latest_if_newer() -> Result<Option<PathBuf>> {
+    let Some(info) = check_latest_if_newer().await? else {
+        return Ok(None);
+    };
+
+    // If the asset is missing, we can't download/apply.
+    let (owner, repo) = github_repo_from_env();
+    let latest = info.latest;
+    let asset_name = info.asset_name;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(25))
+        .build()
+        .context("build http client")?;
+
+    let url = format!(
+        "https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    );
+
+    let resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "twitchdesk-desktop-updater")
+        .send()
+        .await
+        .context("fetch latest release")?;
+
+    if !resp.status().is_success() {
+        warn!(status = %resp.status(), "update check failed");
+        return Ok(None);
+    }
+
+    let release: GithubRelease = resp.json().await.context("parse release json")?;
+
     let Some(asset) = release.assets.into_iter().find(|a| a.name == asset_name) else {
         warn!(expected = %asset_name, "no matching release asset for this platform");
         return Ok(None);
     };
 
+    let current = Version::parse(env!("CARGO_PKG_VERSION"))
+        .context("parse current app version")?;
     info!(from = %current, to = %latest, asset = %asset_name, "update available");
 
     let bytes = client

@@ -5,6 +5,7 @@ mod models;
 mod storage;
 mod update;
 mod preview;
+mod loading;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -13,8 +14,11 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    // Self-update on startup (release builds only).
-    update::maybe_run_startup_update()?;
+    // Internal updater apply-mode (spawned helper process).
+    update::maybe_run_apply_mode_and_exit()?;
+
+    // Show the branded HTML loading splash every launch (best effort).
+    loading::show_startup_loading_splash_best_effort();
 
     app::run_app()
 }

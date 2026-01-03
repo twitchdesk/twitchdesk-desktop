@@ -37,6 +37,11 @@ pub(crate) struct TwitchDeskApp {
     pub(crate) api_health_last_checked: Option<Instant>,
     pub(crate) api_health_task: Option<tokio::task::JoinHandle<bool>>,
 
+    // Updates
+    pub(crate) update_available: Option<String>,
+    pub(crate) update_last_error: Option<String>,
+    pub(crate) update_check_task: Option<tokio::task::JoinHandle<Result<Option<String>, String>>>,
+
     // Templates
     pub(crate) templates_list: Vec<crate::models::TemplateListItem>,
     pub(crate) templates_new_name: String,
@@ -80,7 +85,7 @@ impl TwitchDeskApp {
             Screen::Login
         };
 
-        Self {
+        let mut app = Self {
             local,
             status,
             username,
@@ -98,6 +103,10 @@ impl TwitchDeskApp {
             api_health_last_checked: None,
             api_health_task: None,
 
+            update_available: None,
+            update_last_error: None,
+            update_check_task: None,
+
             templates_list: vec![],
             templates_new_name: "".to_string(),
             templates_selected_template_id: None,
@@ -112,7 +121,17 @@ impl TwitchDeskApp {
             templates_duplicate_template_name: "".to_string(),
             templates_status: "".to_string(),
             rt,
+        };
+
+        // If we have a persisted bearer token, sync user config from the API.
+        if app.screen == Screen::Dashboard {
+            let _ = app.load_user_config_from_api();
         }
+
+        // Check for updates once on startup (release builds only).
+        app.schedule_update_check();
+
+        app
     }
 
     pub(crate) fn start_transition(&mut self, next: Screen) {
@@ -130,6 +149,7 @@ impl TwitchDeskApp {
 
     pub(crate) fn logout(&mut self) {
         self.local.access_token = None;
+        self.local.user_cfg = crate::models::UserConfig::default();
         self.save_local();
         self.start_transition(Screen::Login);
         self.active_view = View::Home;

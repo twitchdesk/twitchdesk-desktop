@@ -3,6 +3,7 @@ use tracing::warn;
 use crate::models::{
     AuthLoginRequest, AuthLoginResponse, AuthRegisterRequest, AuthRegisterResponse, ChannelAddRequest,
     ChannelStatus, ChannelsResponse,
+    MeResponse,
     TemplateCreateRequest, TemplateDetailResponse, TemplateDuplicateRequest, TemplateVersionCreateRequest,
     TemplateVersionResponse, TemplateVersionUpdateRequest,
     TemplatesListResponse,
@@ -25,6 +26,36 @@ impl TwitchDeskApp {
             return Err("Missing API base URL".to_string());
         }
         Ok((base, token))
+    }
+
+    pub(crate) fn load_user_config_from_api(&mut self) -> Result<(), anyhow::Error> {
+        let (base, token) = self.api_base_and_token().map_err(anyhow::Error::msg)?;
+        let url = format!("{}/v1/users/me", base);
+
+        let me = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<MeResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        })?;
+
+        // Sync non-secret settings from API.
+        self.local.user_cfg.twitch_client_id = me.twitch_client_id;
+        self.local.user_cfg.public_twitch_avatar_enabled = me.public_twitch_avatar_enabled;
+
+        // Never fetch/persist the secret; user must re-enter it when changing.
+        self.local.user_cfg.twitch_client_secret.clear();
+
+        Ok(())
     }
 
     pub(crate) fn save_user_config_to_api(&mut self) {
@@ -55,6 +86,8 @@ impl TwitchDeskApp {
 
         match result {
             Ok(()) => {
+                // We never want to keep secrets around longer than needed.
+                self.local.user_cfg.twitch_client_secret.clear();
                 self.status = "Saved settings to cloud API.".to_string();
             }
             Err(e) => {
@@ -90,6 +123,9 @@ impl TwitchDeskApp {
                 self.local.username = Some(self.username.trim().to_string());
                 self.local.access_token = Some(r.access_token);
                 self.save_local();
+                if let Err(e) = self.load_user_config_from_api() {
+                    warn!(error = ?e, "load user config after register failed");
+                }
                 self.status = "Registered. Saved bearer token locally.".to_string();
                 self.start_transition(Screen::Dashboard);
             }
@@ -126,6 +162,9 @@ impl TwitchDeskApp {
                 self.local.username = Some(self.username.trim().to_string());
                 self.local.access_token = Some(r.access_token);
                 self.save_local();
+                if let Err(e) = self.load_user_config_from_api() {
+                    warn!(error = ?e, "load user config after login failed");
+                }
                 self.status = "Logged in. Saved bearer token locally.".to_string();
                 self.start_transition(Screen::Dashboard);
             }

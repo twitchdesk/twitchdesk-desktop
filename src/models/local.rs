@@ -8,7 +8,8 @@ pub struct LocalClientState {
     pub username: Option<String>,
     pub access_token: Option<String>,
 
-    #[serde(default)]
+    // Keep config in memory only; it is stored server-side via the API.
+    #[serde(skip)]
     pub user_cfg: UserConfig,
 }
 

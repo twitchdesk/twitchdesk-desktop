@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Twitchdesk Loading Card</title>
+  <style>
+    :root{
+      /* --- QUICK TWEAKS --- */
+      --accent: #7c5cff;        /* neon purple */
+      --accent2:#00f5d4;        /* neon mint */
+      --bg1:    #05060a;
+      --bg2:    #0b0e18;
+      --text:   #e9ecff;
+
+      --durationMs: 5200;       /* total loop */
+      --logoAtMs:   4200;       /* when logo takes over */
+      --grain: 0.08;
+    }
+
+    html, body { height: 100%; margin: 0; background: #000; overflow: hidden; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      color: var(--text);
+    }
+
+    /* Background */
+    .stage{
+      position: relative;
+      width: 100vw; height: 100vh;
+      background:
+        radial-gradient(1200px 700px at 70% 30%, rgba(124,92,255,.22), transparent 55%),
+        radial-gradient(900px 600px at 25% 70%, rgba(0,245,212,.16), transparent 60%),
+        linear-gradient(140deg, var(--bg1), var(--bg2));
+      isolation: isolate;
+    }
+
+    /* Subtle animated scanlines + glow */
+    .stage::before{
+      content:"";
+      position:absolute; inset:0;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,0.05) 0px,
+          rgba(255,255,255,0.05) 1px,
+          rgba(0,0,0,0.0) 3px,
+          rgba(0,0,0,0.0) 6px
+        );
+      opacity: .12;
+      mix-blend-mode: overlay;
+      animation: scan 3.2s linear infinite;
+      pointer-events:none;
+      z-index: 0;
+    }
+    @keyframes scan{
+      0%{ transform: translateY(-12px); }
+      100%{ transform: translateY(12px); }
+    }
+
+    /* Grain */
+    .grain{
+      position:absolute; inset:-20%;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
+      opacity: var(--grain);
+      mix-blend-mode: overlay;
+      animation: grain 7s steps(6) infinite;
+      pointer-events:none;
+      z-index: 1;
+    }
+    @keyframes grain{
+      0%{ transform: translate(0,0) rotate(0deg); }
+      20%{ transform: translate(-2%, 1%) rotate(1deg); }
+      40%{ transform: translate(1%, -2%) rotate(-1deg); }
+      60%{ transform: translate(3%, 2%) rotate(1deg); }
+      80%{ transform: translate(-1%, 3%) rotate(-1deg); }
+      100%{ transform: translate(0,0) rotate(0deg); }
+    }
+
+    /* Floating particles */
+    canvas#fx{
+      position:absolute; inset:0;
+      z-index: 2;
+      pointer-events:none;
+    }
+
+    /* Card */
+    .cardWrap{
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      z-index: 3;
+    }
+    .card{
+      width:min(920px, 92vw);
+      height:min(420px, 46vh);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+      border: 1px solid rgba(255,255,255,.10);
+      box-shadow:
+        0 22px 70px rgba(0,0,0,.55),
+        0 0 0 1px rgba(124,92,255,.18) inset;
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: blur(10px);
+      transform: translateZ(0);
+    }
+    .card::before{
+      content:"";
+      position:absolute; inset:-2px;
+      background: conic-gradient(from 220deg,
+        transparent 0 18%,
+        rgba(124,92,255,.55) 22%,
+        transparent 28% 55%,
+        rgba(0,245,212,.45) 62%,
+        transparent 70% 100%
+      );
+      filter: blur(18px);
+      opacity: .35;
+      animation: halo 5s linear infinite;
+      z-index: 0;
+    }
+    @keyframes halo{
+      0%{ transform: rotate(0deg) scale(1.05); }
+      100%{ transform: rotate(360deg) scale(1.05); }
+    }
+
+    .content{
+      position:absolute; inset:0;
+      padding: 34px 34px 28px 34px;
+      display:flex; flex-direction:column;
+      gap: 18px;
+      z-index: 1;
+    }
+
+    /* Top row */
+    .topRow{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap: 16px;
+    }
+
+    .badge{
+      display:inline-flex;
+      gap:10px;
+      align-items:center;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 12.5px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      opacity: .92;
+    }
+    .dot{
+      width:8px; height:8px; border-radius:50%;
+      background: var(--accent2);
+      box-shadow: 0 0 14px rgba(0,245,212,.8);
+      animation: pulse 1.25s ease-in-out infinite;
+    }
+    @keyframes pulse{
+      0%,100%{ transform: scale(1); opacity: .85; }
+      50%{ transform: scale(1.6); opacity: 1; }
+    }
+
+    .title{
+      margin: 6px 0 0;
+      font-size: clamp(26px, 3vw, 36px);
+      font-weight: 800;
+      letter-spacing: .02em;
+      line-height: 1.1;
+    }
+    .subtitle{
+      margin: 6px 0 0;
+      color: rgba(233,236,255,.78);
+      font-size: clamp(14px, 1.8vw, 16px);
+      line-height: 1.45;
+      max-width: 52ch;
+    }
+
+    /* Progress */
+    .barOuter{
+      margin-top:auto;
+      padding: 14px 14px;
+      border-radius: 16px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.10);
+    }
+    .barMeta{
+      display:flex; justify-content:space-between; align-items:center;
+      font-size: 12.5px;
+      color: rgba(233,236,255,.75);
+      letter-spacing: .06em;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+    .bar{
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      overflow:hidden;
+      position:relative;
+    }
+    .fill{
+      height:100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 20px rgba(124,92,255,.35), 0 0 26px rgba(0,245,212,.18);
+      position:relative;
+    }
+    .fill::after{
+      content:"";
+      position:absolute; inset:-40% -30%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+      transform: translateX(-40%);
+      animation: shine 1.1s linear infinite;
+      opacity: .55;
+    }
+    @keyframes shine{
+      0%{ transform: translateX(-60%); }
+      100%{ transform: translateX(60%); }
+    }
+
+    /* Glitch overlay */
+    .glitch{
+      position:absolute; inset:0;
+      background:
+        linear-gradient(90deg, rgba(124,92,255,.0), rgba(124,92,255,.12), rgba(0,245,212,.0)),
+        radial-gradient(600px 160px at 20% 60%, rgba(0,245,212,.10), transparent 70%);
+      opacity: 0;
+      mix-blend-mode: screen;
+      pointer-events:none;
+      z-index: 2;
+      animation: glitch 2.8s steps(1) infinite;
+    }
+    @keyframes glitch{
+      0%, 72%, 100% { opacity: 0; transform: translate(0,0); }
+      73%{ opacity:.35; transform: translate(2px,-1px); }
+      74%{ opacity:.10; transform: translate(-3px,1px); }
+      75%{ opacity:.25; transform: translate(1px,2px); }
+      76%{ opacity:0; transform: translate(0,0); }
+    }
+
+    /* Final logo screen */
+    .logoScreen{
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      z-index: 4;
+      opacity: 0;
+      transform: scale(.98);
+      transition: opacity 520ms ease, transform 520ms ease;
+      background:
+        radial-gradient(900px 500px at 50% 45%, rgba(124,92,255,.18), transparent 60%),
+        radial-gradient(700px 420px at 55% 55%, rgba(0,245,212,.12), transparent 65%);
+    }
+
+    .logoBox{
+      text-align:center;
+      padding: 28px 30px;
+      border-radius: 24px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.10);
+      box-shadow: 0 30px 90px rgba(0,0,0,.55);
+      min-width: min(720px, 90vw);
+    }
+
+    .wordmark{
+      font-size: clamp(44px, 6vw, 76px);
+      font-weight: 900;
+      letter-spacing: .02em;
+      margin: 0;
+      line-height: 1;
+      text-transform: lowercase;
+      text-shadow:
+        0 0 18px rgba(124,92,255,.35),
+        0 0 32px rgba(0,245,212,.20);
+    }
+    .wordmark span{
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      background-clip:text;
+      color: transparent;
+    }
+
+    .tagline{
+      margin: 12px 0 0;
+      font-size: clamp(13px, 1.8vw, 16px);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: rgba(233,236,255,.74);
+    }
+
+    .logoLine{
+      margin: 18px auto 0;
+      height: 2px;
+      width: min(440px, 70%);
+      background: linear-gradient(90deg, transparent, rgba(124,92,255,.7), rgba(0,245,212,.7), transparent);
+      border-radius: 999px;
+      opacity: .85;
+      animation: breathe 1.9s ease-in-out infinite;
+    }
+    @keyframes breathe{
+      0%,100%{ transform: scaleX(.92); opacity: .70; }
+      50%{ transform: scaleX(1.0); opacity: .95; }
+    }
+
+    .showLogo .logoScreen{ opacity: 1; transform: scale(1); }
+    .showLogo .card{ opacity: 0; transform: scale(.98); transition: opacity 420ms ease, transform 420ms ease; }
+
+    /* Keep card transition smooth */
+    .card { transition: opacity 420ms ease, transform 420ms ease; }
+  </style>
+</head>
+
+<body>
+  <div class="stage" id="stage">
+    <canvas id="fx"></canvas>
+    <div class="grain"></div>
+
+    <div class="cardWrap">
+      <div class="card" id="card">
+        <div class="glitch"></div>
+        <div class="content">
+          <div class="topRow">
+            <div>
+              <div class="badge"><span class="dot"></span> SYSTEM LOAD</div>
+              <h1 class="title">Preparing stream overlay…</h1>
+              <p class="subtitle">Syncing scenes, alerts, and chat modules. Hold tight — we’re almost ready.</p>
+            </div>
+            <div class="badge" style="opacity:.75">Twitchdesk</div>
+          </div>
+
+          <div class="barOuter">
+            <div class="barMeta">
+              <span id="statusText">Initializing</span>
+              <span id="pctText">0%</span>
+            </div>
+            <div class="bar">
+              <div class="fill" id="fill"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="logoScreen" id="logoScreen" aria-hidden="true">
+        <div class="logoBox">
+          <h2 class="wordmark"><span>twitchdesk</span></h2>
+          <div class="logoLine"></div>
+          <p class="tagline">stream tools • clean overlays • fast workflow</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --------- Timeline (looping) ----------
+    const durationMs = Number(getComputedStyle(document.documentElement).getPropertyValue('--durationMs').trim().replace('ms','')) || 5200;
+    const logoAtMs   = Number(getComputedStyle(document.documentElement).getPropertyValue('--logoAtMs').trim().replace('ms','')) || 4200;
+
+    const stage = document.getElementById('stage');
+    const fill = document.getElementById('fill');
+    const pctText = document.getElementById('pctText');
+    const statusText = document.getElementById('statusText');
+
+    const statuses = [
+      { at: 0.08, text: 'Initializing' },
+      { at: 0.28, text: 'Loading assets' },
+      { at: 0.52, text: 'Connecting modules' },
+      { at: 0.76, text: 'Finalizing' },
+      { at: 0.92, text: 'Ready' }
+    ];
+
+    function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
+
+    let start = performance.now();
+    function tick(now){
+      const elapsed = (now - start) % durationMs;
+      const t = Math.min(1, elapsed / logoAtMs);
+      const eased = easeOutCubic(t);
+
+      const pct = Math.round(eased * 100);
+      fill.style.width = pct + '%';
+      pctText.textContent = pct + '%';
+
+      // status text
+      for (let i = statuses.length - 1; i >= 0; i--){
+        if (t >= statuses[i].at){ statusText.textContent = statuses[i].text; break; }
+      }
+
+      // show logo after logoAtMs
+      if (elapsed >= logoAtMs){
+        stage.classList.add('showLogo');
+      } else {
+        stage.classList.remove('showLogo');
+      }
+
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+
+    // --------- Minimal particle FX (canvas) ----------
+    const canvas = document.getElementById('fx');
+    const ctx = canvas.getContext('2d');
+
+    function resize(){
+      canvas.width = Math.floor(window.innerWidth * devicePixelRatio);
+      canvas.height = Math.floor(window.innerHeight * devicePixelRatio);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const rand = (a,b)=> a + Math.random()*(b-a);
+
+    const particles = Array.from({length: 70}, ()=>({
+      x: rand(0, canvas.width),
+      y: rand(0, canvas.height),
+      r: rand(1.2, 2.6) * devicePixelRatio,
+      vx: rand(-0.22, 0.22) * devicePixelRatio,
+      vy: rand(-0.18, 0.18) * devicePixelRatio,
+      a: rand(0.14, 0.42),
+      tw: rand(0.002, 0.008)
+    }));
+
+    function fx(now){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.globalCompositeOperation = 'lighter';
+
+      for (const p of particles){
+        p.x += p.vx; p.y += p.vy;
+        if (p.x < -50) p.x = canvas.width + 50;
+        if (p.x > canvas.width + 50) p.x = -50;
+        if (p.y < -50) p.y = canvas.height + 50;
+        if (p.y > canvas.height + 50) p.y = -50;
+
+        const wobble = 0.12 * Math.sin(now * p.tw);
+        ctx.globalAlpha = Math.max(0, Math.min(1, p.a + wobble));
+
+        // No explicit colors: use white + blending, background gradients give the tint.
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      requestAnimationFrame(fx);
+    }
+    requestAnimationFrame(fx);
+  </script>
+</body>
+</html>

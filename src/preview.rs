@@ -4,6 +4,10 @@ use std::process::Command;
 use anyhow::{Context, Result};
 
 pub(crate) fn open_preview(url: &str) -> Result<()> {
+    open_preview_with_args(url, &[])
+}
+
+pub(crate) fn open_preview_with_args(url: &str, extra_args: &[String]) -> Result<()> {
     let current_exe = std::env::current_exe().context("get current exe")?;
     let exe_dir = current_exe
         .parent()
@@ -35,10 +39,10 @@ pub(crate) fn open_preview(url: &str) -> Result<()> {
         );
     }
 
-    Command::new(preview_exe)
-        .arg(url)
-        .spawn()
-        .context("launch preview helper")?;
+    let mut cmd = Command::new(preview_exe);
+    cmd.arg(url);
+    cmd.args(extra_args);
+    cmd.spawn().context("launch preview helper")?;
 
     Ok(())
 }

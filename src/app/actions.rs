@@ -4,6 +4,7 @@ use crate::models::{
     AuthLoginRequest, AuthLoginResponse, AuthRegisterRequest, AuthRegisterResponse, ChannelAddRequest,
     ChannelStatus, ChannelsResponse,
     MeResponse,
+    TwitchValidateResponse,
     TemplateCreateRequest, TemplateDetailResponse, TemplateDuplicateRequest, TemplateVersionCreateRequest,
     TemplateVersionResponse, TemplateVersionUpdateRequest,
     TemplatesListResponse,
@@ -55,7 +56,61 @@ impl TwitchDeskApp {
         // Never fetch/persist the secret; user must re-enter it when changing.
         self.local.user_cfg.twitch_client_secret.clear();
 
+        // After syncing config, check if Twitch creds are valid in the API.
+        self.check_twitch_credentials_and_maybe_alert();
+
         Ok(())
+    }
+
+    fn check_twitch_credentials_and_maybe_alert(&mut self) {
+        let Ok((base, token)) = self.api_base_and_token() else {
+            return;
+        };
+        let url = format!("{}/v1/twitch/validate", base);
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<TwitchValidateResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(r) => match r.status.as_str() {
+                "ok" => {}
+                "missing" => {
+                    self.alert_popup = Some(
+                        "Twitch Client ID/Secret mangler i cloud config. Gå til Settings og gem et gyldigt Client ID + Client Secret."
+                            .to_string(),
+                    );
+                }
+                "invalid" => {
+                    self.alert_popup = Some(
+                        "Twitch Client Secret er ugyldigt (Twitch svarer 'invalid client secret'). Gå til Settings og gem et korrekt Client Secret."
+                            .to_string(),
+                    );
+                }
+                _ => {
+                    self.alert_popup = Some(
+                        "Kunne ikke validere Twitch credentials. Prøv igen senere."
+                            .to_string(),
+                    );
+                }
+            },
+            Err(e) => {
+                warn!(error = ?e, "twitch credential validation request failed");
+                // Don't spam popups on transient network issues.
+            }
+        }
     }
 
     pub(crate) fn save_user_config_to_api(&mut self) {
@@ -126,6 +181,8 @@ impl TwitchDeskApp {
                 if let Err(e) = self.load_user_config_from_api() {
                     warn!(error = ?e, "load user config after register failed");
                 }
+                // Also validate Twitch creds right after auth.
+                self.check_twitch_credentials_and_maybe_alert();
                 self.status = "Registered. Saved bearer token locally.".to_string();
                 self.start_transition(Screen::Dashboard);
             }
@@ -165,6 +222,8 @@ impl TwitchDeskApp {
                 if let Err(e) = self.load_user_config_from_api() {
                     warn!(error = ?e, "load user config after login failed");
                 }
+                // Also validate Twitch creds right after auth.
+                self.check_twitch_credentials_and_maybe_alert();
                 self.status = "Logged in. Saved bearer token locally.".to_string();
                 self.start_transition(Screen::Dashboard);
             }

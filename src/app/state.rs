@@ -57,6 +57,8 @@ pub(crate) struct TwitchDeskApp {
     pub(crate) templates_duplicate_template_name: String,
     pub(crate) templates_status: String,
 
+    pub(crate) alert_popup: Option<String>,
+
     pub(crate) rt: tokio::runtime::Runtime,
 }
 
@@ -120,6 +122,8 @@ impl TwitchDeskApp {
             templates_new_version: "".to_string(),
             templates_duplicate_template_name: "".to_string(),
             templates_status: "".to_string(),
+
+            alert_popup: None,
             rt,
         };
 
@@ -175,6 +179,39 @@ impl eframe::App for TwitchDeskApp {
                 self.ui_sidebar(ctx);
                 egui::CentralPanel::default().show(ctx, |ui| self.ui_view(ui));
             }
+        }
+
+        self.ui_alert_popup(ctx);
+    }
+}
+
+impl TwitchDeskApp {
+    fn ui_alert_popup(&mut self, ctx: &egui::Context) {
+        let Some(msg) = self.alert_popup.as_ref() else {
+            return;
+        };
+
+        let mut open = true;
+        let mut close_requested = false;
+        egui::Window::new("Twitch")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(msg);
+                ui.add_space(12.0);
+                if ui.button("OK").clicked() {
+                    close_requested = true;
+                }
+            });
+
+        if close_requested {
+            open = false;
+        }
+
+        if !open {
+            self.alert_popup = None;
         }
     }
 }

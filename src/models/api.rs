@@ -80,6 +80,11 @@ pub struct MeResponse {
     pub public_twitch_avatar_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TwitchValidateResponse {
+    pub status: String,
+}
+
 // -------------------------------
 // Overlay Templates (OBS)
 // -------------------------------

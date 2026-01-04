@@ -21,7 +21,7 @@ impl Default for LocalClientState {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .or_else(|| option_env!("TWITCHDESK_API_BASE_URL").map(|v| v.to_string()))
-            .unwrap_or_else(|| "http://localhost:3000".to_string());
+            .unwrap_or_else(|| "https://api.twitchdesk.com".to_string());
 
         Self {
             api_base_url,

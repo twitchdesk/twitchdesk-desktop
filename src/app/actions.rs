@@ -5,6 +5,7 @@ use crate::models::{
     ChannelStatus, ChannelsResponse,
     MeResponse,
     TwitchValidateResponse,
+    TwitchOAuthStartResponse,
     TemplateCreateRequest, TemplateDetailResponse, TemplateDuplicateRequest, TemplateVersionCreateRequest,
     TemplateVersionResponse, TemplateVersionUpdateRequest,
     TemplatesListResponse,
@@ -109,6 +110,45 @@ impl TwitchDeskApp {
             Err(e) => {
                 warn!(error = ?e, "twitch credential validation request failed");
                 // Don't spam popups on transient network issues.
+            }
+        }
+    }
+
+    pub(crate) fn connect_twitch_oauth(&mut self) {
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.status = msg;
+                return;
+            }
+        };
+
+        let url = format!("{}/v1/twitch/oauth/start", base);
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<TwitchOAuthStartResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(r) => match webbrowser::open(&r.url) {
+                Ok(_) => self.status = "Opened Twitch OAuth in browser.".to_string(),
+                Err(e) => self.status = format!("Open browser failed: {e}"),
+            },
+            Err(e) => {
+                warn!(error = ?e, "twitch oauth start failed");
+                self.status = format!("Twitch OAuth start failed: {e:#}");
             }
         }
     }

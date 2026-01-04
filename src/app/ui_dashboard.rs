@@ -100,6 +100,30 @@ impl TwitchDeskApp {
                             ));
                         }
 
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.label("Twitch OAuth Redirect URL");
+                        let account = self
+                            .local
+                            .username
+                            .as_deref()
+                            .unwrap_or(self.username.as_str())
+                            .trim();
+                        let base = self.local.api_base_url.trim().trim_end_matches('/');
+                        let callback_url = format!("{}/{}/twitch/oauth/callback", base, account);
+                        ui.horizontal(|ui| {
+                            ui.monospace(&callback_url);
+                            if ui.button("Copy").clicked() {
+                                ui.output_mut(|o| o.copied_text = callback_url.clone());
+                            }
+                            if ui.button("Connect Twitch").clicked() {
+                                self.connect_twitch_oauth();
+                            }
+                        });
+                        ui.label(
+                            "Add this exact URL in Twitch Developer Console → Your app → OAuth Redirect URLs.",
+                        );
+
                         ui.add_space(8.0);
                         if ui.button("Save").clicked() {
                             self.save_user_config_to_api();

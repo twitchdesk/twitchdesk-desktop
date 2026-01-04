@@ -85,6 +85,12 @@ pub struct TwitchValidateResponse {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TwitchOAuthStartResponse {
+    pub url: String,
+    pub redirect_uri: String,
+}
+
 // -------------------------------
 // Overlay Templates (OBS)
 // -------------------------------

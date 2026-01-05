@@ -9,6 +9,11 @@ use crate::models::{
     TemplateCreateRequest, TemplateDetailResponse, TemplateDuplicateRequest, TemplateVersionCreateRequest,
     TemplateVersionResponse, TemplateVersionUpdateRequest,
     TemplatesListResponse,
+    AiTokenStatusResponse, AiTokenUpsertRequest,
+    AiAlertCreateRequest, AiAlertUpdateRequest,
+    AiAlertsListResponse, AiAlertDetailResponse,
+    AiAlertPublicStatusResponse,
+    AiAlertFireRequest, AiAlertFireResponse,
 };
 
 use super::{state::TwitchDeskApp, types::Screen};
@@ -188,6 +193,599 @@ impl TwitchDeskApp {
             Err(e) => {
                 warn!(error = ?e, "save user config failed");
                 self.status = format!("Save to API failed: {e:#}");
+            }
+        }
+    }
+
+    // -------------------------------
+    // AI Alerts
+    // -------------------------------
+
+    pub(crate) fn ai_token_refresh_status(&mut self) {
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!("{}/v1/ai/token", base);
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiTokenStatusResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(r) => {
+                self.ai_token_connected = Some(r.connected);
+                self.ai_status = if r.connected {
+                    "OpenAI token connected.".to_string()
+                } else {
+                    "OpenAI token not connected.".to_string()
+                };
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai token status failed");
+                self.ai_status = format!("Token status failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_token_save(&mut self) {
+        let token_value = self.ai_token_input.trim().to_string();
+        if token_value.is_empty() {
+            self.ai_status = "Missing OpenAI token".to_string();
+            return;
+        }
+
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!("{}/v1/ai/token", base);
+        let req = AiTokenUpsertRequest { token: token_value };
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .put(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .json(&req)
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+
+        match result {
+            Ok(()) => {
+                self.ai_token_input.clear();
+                self.ai_token_connected = Some(true);
+                self.ai_status = "Saved OpenAI token to cloud API.".to_string();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai token save failed");
+                self.ai_status = format!("Save token failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_token_disconnect(&mut self) {
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!("{}/v1/ai/token", base);
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .delete(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+
+        match result {
+            Ok(()) => {
+                self.ai_token_connected = Some(false);
+                self.ai_status = "Disconnected OpenAI token.".to_string();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai token delete failed");
+                self.ai_status = format!("Disconnect token failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alerts_refresh_list(&mut self) {
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!("{}/v1/ai/alerts", base);
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertsListResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(resp) => {
+                self.ai_alerts_list = resp.alerts;
+                self.ai_status = "Alerts refreshed.".to_string();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai alerts list failed");
+                self.ai_status = format!("Alerts refresh failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alerts_clear_editor(&mut self) {
+        self.ai_alerts_selected_id = None;
+        self.ai_alerts_name.clear();
+        self.ai_alerts_prompt.clear();
+        self.ai_alerts_is_enabled = true;
+        self.ai_alerts_cooldown_ms = 0;
+        self.ai_public_enabled = false;
+        self.ai_public_url.clear();
+        self.ai_test_result.clear();
+    }
+
+    pub(crate) fn ai_alerts_select(&mut self, alert_id: &str) {
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!(
+            "{}/v1/ai/alerts/{}",
+            base,
+            urlencoding::encode(alert_id.trim())
+        );
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertDetailResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(detail) => {
+                self.ai_alerts_selected_id = Some(detail.id);
+                self.ai_alerts_name = detail.name;
+                self.ai_alerts_prompt = detail.prompt;
+                self.ai_alerts_is_enabled = detail.is_enabled;
+                self.ai_alerts_cooldown_ms = detail.cooldown_ms;
+                self.ai_test_result.clear();
+                self.ai_alert_public_refresh();
+                self.ai_status = "Alert loaded.".to_string();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai alert get failed");
+                self.ai_status = format!("Load alert failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alerts_create(&mut self) {
+        let name = self.ai_alerts_name.trim().to_string();
+        if name.is_empty() {
+            self.ai_status = "Missing alert name".to_string();
+            return;
+        }
+        let prompt = self.ai_alerts_prompt.trim().to_string();
+        if prompt.is_empty() {
+            self.ai_status = "Missing prompt".to_string();
+            return;
+        }
+
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!("{}/v1/ai/alerts", base);
+        let req = AiAlertCreateRequest {
+            name,
+            prompt,
+            is_enabled: Some(self.ai_alerts_is_enabled),
+            cooldown_ms: Some(self.ai_alerts_cooldown_ms.max(0)),
+        };
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .post(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .json(&req)
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertDetailResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(created) => {
+                self.ai_status = "Alert created.".to_string();
+                self.ai_alerts_selected_id = Some(created.id.clone());
+                self.ai_alerts_refresh_list();
+                self.ai_alerts_select(&created.id);
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai alert create failed");
+                self.ai_status = format!("Create alert failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alerts_update(&mut self) {
+        let Some(alert_id) = self.ai_alerts_selected_id.clone() else {
+            self.ai_status = "Select an alert first".to_string();
+            return;
+        };
+
+        let name = self.ai_alerts_name.trim().to_string();
+        if name.is_empty() {
+            self.ai_status = "Missing alert name".to_string();
+            return;
+        }
+        let prompt = self.ai_alerts_prompt.trim().to_string();
+        if prompt.is_empty() {
+            self.ai_status = "Missing prompt".to_string();
+            return;
+        }
+
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!(
+            "{}/v1/ai/alerts/{}",
+            base,
+            urlencoding::encode(alert_id.trim())
+        );
+        let req = AiAlertUpdateRequest {
+            name: Some(name),
+            prompt: Some(prompt),
+            is_enabled: Some(self.ai_alerts_is_enabled),
+            cooldown_ms: Some(self.ai_alerts_cooldown_ms.max(0)),
+        };
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .put(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .json(&req)
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertDetailResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(_updated) => {
+                self.ai_status = "Alert updated.".to_string();
+                self.ai_alerts_refresh_list();
+                self.ai_alert_public_refresh();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai alert update failed");
+                self.ai_status = format!("Update alert failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alerts_delete(&mut self) {
+        let Some(alert_id) = self.ai_alerts_selected_id.clone() else {
+            self.ai_status = "Select an alert first".to_string();
+            return;
+        };
+
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!(
+            "{}/v1/ai/alerts/{}",
+            base,
+            urlencoding::encode(alert_id.trim())
+        );
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .delete(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+
+        match result {
+            Ok(()) => {
+                self.ai_status = "Alert deleted.".to_string();
+                self.ai_alerts_clear_editor();
+                self.ai_alerts_refresh_list();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai alert delete failed");
+                self.ai_status = format!("Delete alert failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alert_public_refresh(&mut self) {
+        let Some(alert_id) = self.ai_alerts_selected_id.clone() else {
+            return;
+        };
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!(
+            "{}/v1/ai/alerts/{}/public",
+            base,
+            urlencoding::encode(alert_id.trim())
+        );
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .get(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertPublicStatusResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(r) => {
+                self.ai_public_enabled = r.enabled;
+                self.ai_public_url = r.public_url.unwrap_or_default();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai public status failed");
+                self.ai_status = format!("Public status failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alert_public_enable(&mut self) {
+        let Some(alert_id) = self.ai_alerts_selected_id.clone() else {
+            self.ai_status = "Select an alert first".to_string();
+            return;
+        };
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!(
+            "{}/v1/ai/alerts/{}/public",
+            base,
+            urlencoding::encode(alert_id.trim())
+        );
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .post(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertPublicStatusResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(r) => {
+                self.ai_public_enabled = r.enabled;
+                self.ai_public_url = r.public_url.unwrap_or_default();
+                self.ai_status = "Public trigger enabled.".to_string();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai public enable failed");
+                self.ai_status = format!("Enable public failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alert_public_disable(&mut self) {
+        let Some(alert_id) = self.ai_alerts_selected_id.clone() else {
+            self.ai_status = "Select an alert first".to_string();
+            return;
+        };
+        let (base, token) = match self.api_base_and_token() {
+            Ok(v) => v,
+            Err(msg) => {
+                self.ai_status = msg;
+                return;
+            }
+        };
+
+        let url = format!(
+            "{}/v1/ai/alerts/{}/public",
+            base,
+            urlencoding::encode(alert_id.trim())
+        );
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http
+                .delete(url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertPublicStatusResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(r) => {
+                self.ai_public_enabled = r.enabled;
+                self.ai_public_url = r.public_url.unwrap_or_default();
+                self.ai_status = "Public trigger disabled.".to_string();
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai public disable failed");
+                self.ai_status = format!("Disable public failed: {e:#}");
+            }
+        }
+    }
+
+    pub(crate) fn ai_alert_test_fire(&mut self) {
+        let url = self.ai_public_url.trim().to_string();
+        if url.is_empty() {
+            self.ai_test_result = "Public URL missing. Enable public first.".to_string();
+            return;
+        }
+
+        let event_id = self.ai_test_event_id.trim().to_string();
+        if event_id.is_empty() {
+            self.ai_test_result = "Missing event_id".to_string();
+            return;
+        }
+
+        let username = self.ai_test_username.trim().to_string();
+        let message = self.ai_test_message.trim().to_string();
+        let req = AiAlertFireRequest {
+            event_id,
+            username: if username.is_empty() { None } else { Some(username) },
+            message: if message.is_empty() { None } else { Some(message) },
+        };
+
+        let result = self.rt.block_on(async {
+            let http = reqwest::Client::new();
+            let resp = http.post(url).json(&req).send().await?;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!("HTTP {}: {}", status, body);
+            }
+            let parsed = serde_json::from_str::<AiAlertFireResponse>(&body)?;
+            Ok::<_, anyhow::Error>(parsed)
+        });
+
+        match result {
+            Ok(r) => {
+                let mut out = format!("status: {}", r.status);
+                if let Some(t) = r.text {
+                    out.push_str("\n\n");
+                    out.push_str(&t);
+                }
+                self.ai_test_result = out;
+            }
+            Err(e) => {
+                warn!(error = ?e, "ai test fire failed");
+                self.ai_test_result = format!("Fire failed: {e:#}");
             }
         }
     }

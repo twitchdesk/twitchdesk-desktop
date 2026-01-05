@@ -57,6 +57,25 @@ pub(crate) struct TwitchDeskApp {
     pub(crate) templates_duplicate_template_name: String,
     pub(crate) templates_status: String,
 
+    // AI Alerts
+    pub(crate) ai_status: String,
+    pub(crate) ai_token_connected: Option<bool>,
+    pub(crate) ai_token_input: String,
+
+    pub(crate) ai_alerts_list: Vec<crate::models::AiAlertListItem>,
+    pub(crate) ai_alerts_selected_id: Option<String>,
+    pub(crate) ai_alerts_name: String,
+    pub(crate) ai_alerts_prompt: String,
+    pub(crate) ai_alerts_is_enabled: bool,
+    pub(crate) ai_alerts_cooldown_ms: i32,
+    pub(crate) ai_public_enabled: bool,
+    pub(crate) ai_public_url: String,
+
+    pub(crate) ai_test_event_id: String,
+    pub(crate) ai_test_username: String,
+    pub(crate) ai_test_message: String,
+    pub(crate) ai_test_result: String,
+
     pub(crate) alert_popup: Option<String>,
 
     pub(crate) rt: tokio::runtime::Runtime,
@@ -122,6 +141,24 @@ impl TwitchDeskApp {
             templates_new_version: "".to_string(),
             templates_duplicate_template_name: "".to_string(),
             templates_status: "".to_string(),
+
+            ai_status: "".to_string(),
+            ai_token_connected: None,
+            ai_token_input: "".to_string(),
+
+            ai_alerts_list: vec![],
+            ai_alerts_selected_id: None,
+            ai_alerts_name: "".to_string(),
+            ai_alerts_prompt: "".to_string(),
+            ai_alerts_is_enabled: true,
+            ai_alerts_cooldown_ms: 0,
+            ai_public_enabled: false,
+            ai_public_url: "".to_string(),
+
+            ai_test_event_id: "test-1".to_string(),
+            ai_test_username: "".to_string(),
+            ai_test_message: "".to_string(),
+            ai_test_result: "".to_string(),
 
             alert_popup: None,
             rt,

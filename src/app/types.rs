@@ -12,4 +12,5 @@ pub(crate) enum View {
     Channels,
     TwitchLookup,
     Templates,
+    AiAlerts,
 }

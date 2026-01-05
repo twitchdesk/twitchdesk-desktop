@@ -162,3 +162,86 @@ pub struct TemplateVersionResponse {
     pub style_css: String,
     pub overlay_js: String,
 }
+
+// -------------------------------
+// AI Alerts
+// -------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiTokenUpsertRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiTokenStatusResponse {
+    pub connected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAlertCreateRequest {
+    pub name: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub is_enabled: Option<bool>,
+    #[serde(default)]
+    pub cooldown_ms: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AiAlertUpdateRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub is_enabled: Option<bool>,
+    #[serde(default)]
+    pub cooldown_ms: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAlertListItem {
+    pub id: String,
+    pub name: String,
+    pub is_enabled: bool,
+    pub cooldown_ms: i32,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAlertsListResponse {
+    pub alerts: Vec<AiAlertListItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAlertDetailResponse {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+    pub is_enabled: bool,
+    pub cooldown_ms: i32,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAlertPublicStatusResponse {
+    pub enabled: bool,
+    #[serde(default)]
+    pub public_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAlertFireRequest {
+    pub event_id: String,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAlertFireResponse {
+    pub status: String,
+    #[serde(default)]
+    pub text: Option<String>,
+}

@@ -38,6 +38,16 @@ impl TwitchDeskApp {
                 // Auto-load templates when opening the view.
                 self.templates_refresh_list();
             }
+
+            if ui
+                .selectable_label(self.active_view == View::AiAlerts, "AI Alerts")
+                .clicked()
+            {
+                self.active_view = View::AiAlerts;
+                // Auto-load when opening the view.
+                self.ai_token_refresh_status();
+                self.ai_alerts_refresh_list();
+            }
         });
     }
 
@@ -195,7 +205,215 @@ impl TwitchDeskApp {
             View::Templates => {
                 self.ui_templates(ui);
             }
+
+            View::AiAlerts => {
+                self.ui_ai_alerts(ui);
+            }
         }
+    }
+
+    fn ui_ai_alerts(&mut self, ui: &mut egui::Ui) {
+        ui.heading("AI Alerts");
+        if !self.ai_status.trim().is_empty() {
+            ui.label(self.ai_status.clone());
+        }
+
+        ui.add_space(8.0);
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(12.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let connected = self.ai_token_connected.unwrap_or(false);
+                    let label = if self.ai_token_connected.is_none() {
+                        "Token status: unknown"
+                    } else if connected {
+                        "Token status: connected"
+                    } else {
+                        "Token status: not connected"
+                    };
+                    ui.label(label);
+                    if ui.button("Refresh").clicked() {
+                        self.ai_token_refresh_status();
+                    }
+                });
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("OpenAI API key");
+                    ui.add(egui::TextEdit::singleline(&mut self.ai_token_input).password(true));
+                    if ui.button("Save").clicked() {
+                        self.ai_token_save();
+                    }
+                    if ui.button("Disconnect").clicked() {
+                        self.ai_token_disconnect();
+                    }
+                });
+                ui.label("Note: Token is stored encrypted in the cloud API.");
+            });
+
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ui.button("Refresh alerts").clicked() {
+                self.ai_alerts_refresh_list();
+            }
+            if ui.button("New alert").clicked() {
+                self.ai_alerts_clear_editor();
+            }
+        });
+
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let list_width = 280.0;
+            let height = ui.available_height();
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(list_width, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.heading("Your alerts");
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if self.ai_alerts_list.is_empty() {
+                            ui.label("No alerts yet");
+                            return;
+                        }
+
+                        for a in self.ai_alerts_list.clone() {
+                            let selected = self
+                                .ai_alerts_selected_id
+                                .as_deref()
+                                .map(|id| id == a.id)
+                                .unwrap_or(false);
+
+                            let mut label = a.name.clone();
+                            if !a.is_enabled {
+                                label.push_str(" (disabled)");
+                            }
+
+                            if ui.selectable_label(selected, label).clicked() {
+                                self.ai_alerts_select(&a.id);
+                            }
+                        }
+                    });
+                },
+            );
+
+            ui.separator();
+
+            ui.vertical(|ui| {
+                let is_editing = self.ai_alerts_selected_id.is_some();
+                ui.heading(if is_editing { "Edit alert" } else { "Create alert" });
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut self.ai_alerts_name);
+                });
+                ui.add_space(6.0);
+                ui.label("Prompt");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.ai_alerts_prompt)
+                        .desired_rows(6)
+                        .hint_text("Use {{username}} and {{message}}"),
+                );
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.ai_alerts_is_enabled, "Enabled");
+                    ui.separator();
+                    ui.label("Cooldown (ms)");
+                    ui.add(egui::DragValue::new(&mut self.ai_alerts_cooldown_ms).range(0..=600_000));
+                });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if is_editing {
+                        if ui.button("Save changes").clicked() {
+                            self.ai_alerts_update();
+                        }
+                        if ui.button("Delete").clicked() {
+                            self.ai_alerts_delete();
+                        }
+                    } else if ui.button("Create").clicked() {
+                        self.ai_alerts_create();
+                    }
+                });
+
+                ui.add_space(12.0);
+                ui.separator();
+
+                if let Some(alert_id) = self.ai_alerts_selected_id.clone() {
+                    ui.heading("Public trigger");
+                    ui.add_space(6.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label(if self.ai_public_enabled {
+                            "Public: enabled"
+                        } else {
+                            "Public: disabled"
+                        });
+
+                        if ui.button("Refresh").clicked() {
+                            self.ai_alert_public_refresh();
+                        }
+                        if !self.ai_public_enabled {
+                            if ui.button("Enable public").clicked() {
+                                self.ai_alert_public_enable();
+                            }
+                        } else if ui.button("Disable public").clicked() {
+                            self.ai_alert_public_disable();
+                        }
+                    });
+
+                    if !self.ai_public_url.trim().is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.monospace(self.ai_public_url.clone());
+                            if ui.button("Copy").clicked() {
+                                ui.output_mut(|o| o.copied_text = self.ai_public_url.clone());
+                            }
+                        });
+                    }
+
+                    ui.add_space(10.0);
+                    ui.heading("Test fire");
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label("event_id");
+                        ui.text_edit_singleline(&mut self.ai_test_event_id);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("username");
+                        ui.text_edit_singleline(&mut self.ai_test_username);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("message");
+                        ui.text_edit_singleline(&mut self.ai_test_message);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Fire").clicked() {
+                            self.ai_alert_test_fire();
+                        }
+                        if ui.button("Clear").clicked() {
+                            self.ai_test_result.clear();
+                        }
+                    });
+
+                    if !self.ai_test_result.trim().is_empty() {
+                        ui.add_space(6.0);
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.ai_test_result)
+                                .desired_rows(6)
+                                .desired_width(f32::INFINITY),
+                        );
+                    }
+
+                    // Avoid unused variable warning (future: show more per-alert details).
+                    let _ = alert_id;
+                } else {
+                    ui.label("Select an alert to enable public trigger / test fire.");
+                }
+            });
+        });
     }
 
     fn ui_templates(&mut self, ui: &mut egui::Ui) {
